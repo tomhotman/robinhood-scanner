@@ -108,6 +108,17 @@ def _lt(value, threshold):
     return value is not None and value < threshold
 
 
+def _now_wib():
+    """Current time in WIB (UTC+7), independent of the host's timezone.
+
+    Streamlit Cloud containers run on UTC, so time.localtime() would label
+    a UTC clock reading as +07:00 (7 hours behind WIB). Compute WIB from
+    UTC explicitly instead.
+    """
+    return time.strftime("%Y-%m-%dT%H:%M:%S+07:00",
+                         time.gmtime(time.time() + 7 * 3600))
+
+
 # --- DexScreener -----------------------------------------------------------
 def fetch_new_profiles():
     """token-profiles/latest/v1 -> Robinhood token addresses (newest first).
@@ -1252,7 +1263,7 @@ def scan_once(cfg=None, max_audit=12, blacklist=None, state_dir=None):
     cfg = {**DEFAULTS, **(cfg or {})}
     blacklist = blacklist or set()
     now_ms = time.time() * 1000
-    rep = {"ts": time.strftime("%Y-%m-%dT%H:%M:%S+07:00", time.localtime()),
+    rep = {"ts": _now_wib(),
            "sources": {}, "pairs_checked": 0, "prefiltered": 0,
            "audited": 0, "passed": [], "incomplete": [], "failed_log": [],
            "blacklist_add": []}
@@ -1399,7 +1410,7 @@ def re_audit_watchlist(state_dir, cfg=None, blacklist=None):
     wl_path = os.path.join(state_dir, "watchlist.json")
     wl = _load_json(wl_path, {})
     alerts = []
-    now = time.strftime("%Y-%m-%dT%H:%M:%S+07:00", time.localtime())
+    now = _now_wib()
     for ca, entry in list(wl.items()):
         try:
             ok, pairs, _ = (True, [], "")
@@ -1511,7 +1522,7 @@ def update_watchlist_from_scan(state_dir, passed):
     """Add newly-passed tokens to the watchlist; return (added, already)."""
     wl_path = os.path.join(state_dir, "watchlist.json")
     wl = _load_json(wl_path, {})
-    now = time.strftime("%Y-%m-%dT%H:%M:%S+07:00", time.localtime())
+    now = _now_wib()
     added, already = [], []
     for rec in passed:
         ca = rec["ca"].lower()
@@ -1537,7 +1548,7 @@ def write_recap(state_dir, scan_rep, alerts):
     recap_path = os.path.join(state_dir, "recap.json")
     recap = _load_json(recap_path, {"date": "", "passed_today": [],
                                     "alerts_today": 0})
-    today = time.strftime("%Y-%m-%d", time.localtime())
+    today = _now_wib()[:10]  # WIB date, not the host's local date
     if recap.get("date") != today:
         recap = {"date": today, "passed_today": [], "alerts_today": 0}
     seen = {p["ca"].lower() for p in recap["passed_today"]}
