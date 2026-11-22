@@ -74,6 +74,63 @@ def _cfg():
     }
 
 
+HISTORY_PATH = os.path.join(STATE_DIR, "scan_history.jsonl")
+HISTORY_KEEP = 200
+
+
+def _append_scan_history(rep):
+    """Append one line per scan cycle so the dashboard shows live activity
+    (like a terminal log) instead of a static wall of text."""
+    failed = rep.get("failed_log", [])
+    entry = {
+        "ts": rep.get("ts", "-"),
+        "pairs": rep.get("pairs_checked", 0),
+        "prefiltered": rep.get("prefiltered", 0),
+        "audited": rep.get("audited", 0),
+        "passed": len(rep.get("passed", [])),
+        "incomplete": len(rep.get("incomplete", [])),
+        "failed": len(failed),
+        "failed_reasons": [
+            (f.get("symbol") or (f.get("ca", "")[:10] + "…"),
+             "; ".join(f.get("reasons", [])[:2]))
+            for f in failed[:5]
+        ],
+    }
+    try:
+        lines = []
+        if os.path.exists(HISTORY_PATH):
+            with open(HISTORY_PATH, encoding="utf-8") as fh:
+                lines = fh.readlines()
+        lines.append(json.dumps(entry, ensure_ascii=False) + "\n")
+        lines = lines[-HISTORY_KEEP:]
+        with open(HISTORY_PATH, "w", encoding="utf-8") as fh:
+            fh.writelines(lines)
+    except Exception:
+        pass
+
+
+def _read_scan_history(limit=15):
+    if not os.path.exists(HISTORY_PATH):
+        return []
+    try:
+        with open(HISTORY_PATH, encoding="utf-8") as fh:
+            return [json.loads(ln) for ln in fh.readlines()[-limit:]]
+    except Exception:
+        return []
+
+
+def _log_line(e):
+    ts = (e.get("ts") or "-")[11:19]  # HH:MM:SS (WIB)
+    line = (f"{ts}  scan: {e['pairs']} pair dicek · "
+            f"{e['prefiltered']} lolos pre-filter · {e['audited']} diaudit "
+            f"· {e['passed']} LOLOS")
+    if e["failed"]:
+        line += f" · {e['failed']} gugur"
+    for sym, why in e.get("failed_reasons", []):
+        line += f"\n         ↳ {sym}: {why}"
+    return line
+
+
 def render_dashboard():
     """One scan + full render. Re-run by the auto-refresh fragment."""
     cfg = _cfg()
@@ -88,6 +145,7 @@ def render_dashboard():
                 blacklist=scanner.load_blacklist(STATE_DIR))
         st.session_state["last_scan"] = rep
         st.session_state["last_scan_at"] = now
+        _append_scan_history(rep)
         added, _ = scanner.update_watchlist_from_scan(STATE_DIR,
                                                       rep["passed"])
         if added:
@@ -122,13 +180,37 @@ def render_dashboard():
     ]
     st.info(" | ".join(status_bits))
 
+    passed = rep.get("passed", [])
+    incomplete = rep.get("incomplete", [])
+
+    # --- cara pakai: plain Indonesian, what the page is for --------------
+    st.info("**Cara pakai:** Aplikasi ini ngecek token meme baru tiap 60 "
+            "detik. Kalau ada yang lolos semua cek ketat, kartunya muncul "
+            "di bawah + alert masuk ke chat lo. Kalau kosong, mesinnya "
+            "tetap jalan — lihat log di bawah. Dashboard ini cuma "
+            "screening, jangan beli dari sini.")
+
+    # --- big live numbers --------------------------------------------------
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("Scan terakhir (WIB)", (rep.get("ts", "-") or "-")[11:19])
+    m2.metric("Pair dicek", rep.get("pairs_checked", 0))
+    m3.metric("Diaudit", audited)
+    m4.metric("LOLOS", len(passed))
+
+    # --- live scan log (terminal-style: grows every 60 s) -----------------
+    st.subheader("📟 Log scan live")
+    st.caption("Nambah tiap 60 detik — kayak terminal, biar kelihatan "
+               "mesinnya kerja.")
+    history = _read_scan_history(limit=15)
+    if history:
+        st.code("\n".join(_log_line(e) for e in history), language="text")
+    else:
+        st.code("Menunggu scan pertama…", language="text")
+
     if not dex_ok:
         st.error("DexScreener tidak merespons — hasil scan kosong BUKAN "
                  "berarti tidak ada token. Coba lagi beberapa saat.")
         return
-
-    passed = rep.get("passed", [])
-    incomplete = rep.get("incomplete", [])
 
     if passed:
         st.toast(f"🚨 Ditemukan {len(passed)} Token Bersih!", icon="🛡️")
@@ -144,8 +226,9 @@ def render_dashboard():
 
     if not passed and not incomplete:
         st.warning("Belum ada token baru yang lolos filter ketat. "
-                   "Status sumber data di atas OK — memang belum ada yang "
-                   "lolos, bukan error.")
+                   "Status sumber data di atas OK — mesin tetap jalan tiap "
+                   "60 detik, lihat log di atas. Kosong itu normal, bukan "
+                   "error.")
     else:
         st.success(f"✅ {len(passed)} token LOLOS semua cek ketat "
                    f"(skor 0–100 di tiap kartu).")
@@ -210,14 +293,16 @@ def render_dashboard():
                 st.table(rows)
                 st.code(t["ca"], language="text")
 
-    # --- failed log ----------------------------------------------------------
+    # --- failed log: visible by default, with reasons ----------------------
     failed = rep.get("failed_log", [])
     if failed:
-        with st.expander(f"🗑️ Log token gugur ({len(failed)})"):
-            for f in failed[:50]:
-                st.write(f"• `{f.get('ca', '')[:12]}…` "
-                         f"({f.get('symbol', '')}): "
-                         + "; ".join(f.get("reasons", [])[:4]))
+        st.subheader("🗑️ Token yang gugur — kenapa ditolak")
+        st.caption("Token yang diaudit tapi gagal di cek ketat. Ini bukti "
+                   "mesinnya kerja, bukan diam.")
+        for f in failed[:10]:
+            st.write(f"• `{f.get('ca', '')[:12]}…` "
+                     f"({f.get('symbol', '')}): "
+                     + "; ".join(f.get("reasons", [])[:4]))
 
     # --- watchlist + recent alerts ------------------------------------------
     st.subheader("👀 Watchlist — token lolos yang terus dipantau")
