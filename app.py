@@ -100,13 +100,24 @@ def render_dashboard():
     dex_ok = src.get("dexscreener_profiles", {}).get("ok")
     gmgn = src.get("gmgn", {})
     onchain = src.get("onchain", {})
+    audited = rep.get("audited", 0)
+    if onchain.get("ok"):
+        onchain_bit = "On-chain RPC: ✅ OK"
+    elif audited == 0:
+        onchain_bit = "On-chain RPC: — (belum ada token diaudit)"
+    else:
+        onchain_bit = "On-chain RPC: ⚠️ " + onchain.get("note", "?")
+    # GMGN is optional since on-chain sniper/bubble replaced it: never warn
+    # when it is simply not configured.
+    gmgn_bit = ("GMGN: ✅ OK (cross-check aktif)" if gmgn.get("ok")
+                else "GMGN: opsional (tidak dipakai)")
     status_bits = [
         f"DexScreener: {'✅ OK' if dex_ok else '❌ GAGAL'}",
-        f"On-chain RPC: {'✅ OK' if onchain.get('ok') else '⚠️ ' + onchain.get('note', '?')}",
-        f"GMGN: {'✅ OK' if gmgn.get('ok') else '⚠️ ' + gmgn.get('note', '?')}",
+        onchain_bit,
+        gmgn_bit,
         f"Pair dicek: {rep.get('pairs_checked', 0)}",
         f"Lolos pre-filter: {rep.get('prefiltered', 0)}",
-        f"Diaudit: {rep.get('audited', 0)}",
+        f"Diaudit: {audited}",
         f"Scan terakhir: {rep.get('ts', '-')}",
     ]
     st.info(" | ".join(status_bits))
